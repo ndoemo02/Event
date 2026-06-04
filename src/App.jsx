@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
@@ -8,33 +8,52 @@ import Occasions from './components/Occasions.jsx';
 
 gsap.registerPlugin(ScrollTrigger);
 
+// Helper to select an evenly spaced subset of frames
+function selectFrames(frames, maxCount) {
+  if (frames.length <= maxCount) return frames;
+  const result = [];
+  const step = (frames.length - 1) / (maxCount - 1);
+  for (let i = 0; i < maxCount; i++) {
+    const idx = Math.min(frames.length - 1, Math.round(i * step));
+    result.push(frames[idx]);
+  }
+  return result;
+}
+
 export default function App() {
+  const [canvasReady, setCanvasReady] = useState(false);
+  const canvasRef = useRef(null);
+
   useEffect(() => {
     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    const spodekFrame = document.querySelector('.spodek-frame');
     const spodekScene = document.querySelector('.spodek-scene');
     const firstBeat = document.querySelector('.spodek-beat.is-first');
     const nightBeat = document.querySelector('.spodek-beat.is-night');
     const occasionCards = gsap.utils.toArray('.occasion-card');
-    let currentFrame = -1;
-    let desiredFrame = 0;
+
+    const preloadedImages = [];
+    const lastGoodFrame = { current: null };
     let frameRaf = 0;
-    let preloadHandle = 0;
-    let framesPreloaded = false;
     let lastScrollY = -1;
     let lastViewportHeight = -1;
-    const frameImages = new Map();
-    const loadedFrames = new Set([0]);
+    let isCancelled = false;
 
-    if (prefersReduced) {
-      if (spodekFrame && SPODEK_FRAMES.length) {
-        spodekFrame.src = SPODEK_FRAMES[SPODEK_FRAMES.length - 1];
+    // Helper to draw a frame onto the canvas
+    const drawFrame = (index) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const img = preloadedImages[index];
+      if (img) {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        lastGoodFrame.current = img;
+      } else if (lastGoodFrame.current) {
+        ctx.drawImage(lastGoodFrame.current, 0, 0, canvas.width, canvas.height);
       }
-
-      ScrollTrigger.getAll().forEach((trigger) => trigger.kill());
-      return;
-    }
+    };
 
     const setSpodekCopy = (progress) => {
       const firstOpacity = gsap.utils.clamp(0, 1, (0.46 - progress) / 0.14);
@@ -55,60 +74,75 @@ export default function App() {
       }
     };
 
-    const applyFrame = (frameIndex) => {
-      if (!spodekFrame || !SPODEK_FRAMES.length) return;
+    // 1. Reduced Motion Fallback
+    if (prefersReduced) {
+      const finalFrameSrc = SPODEK_FRAMES[SPODEK_FRAMES.length - 1];
+      const img = new Image();
+      img.src = finalFrameSrc;
+      img.decode()
+        .then(() => {
+          if (isCancelled) return;
+          preloadedImages[0] = img;
+          setCanvasReady(true);
+          drawFrame(0);
+        })
+        .catch(() => {
+          img.onload = () => {
+            if (isCancelled) return;
+            preloadedImages[0] = img;
+            setCanvasReady(true);
+            drawFrame(0);
+          };
+        });
 
-      if (frameIndex !== currentFrame) {
-        currentFrame = frameIndex;
-        spodekFrame.src = SPODEK_FRAMES[frameIndex];
+      if (firstBeat) gsap.set(firstBeat, { display: 'none' });
+      if (nightBeat) gsap.set(nightBeat, { autoAlpha: 1, y: 0 });
+
+      ScrollTrigger.getAll().forEach((trigger) => trigger.kill());
+      return;
+    }
+
+    // 2. Select Subset of 48 Frames
+    const framesToUse = selectFrames(SPODEK_FRAMES, 48);
+    let loadedCount = 0;
+
+    // 3. Preloading and Pre-decoding loop
+    const onFrameLoaded = (img, index) => {
+      if (isCancelled) return;
+      preloadedImages[index] = img;
+      loadedCount++;
+      if (loadedCount === framesToUse.length) {
+        setCanvasReady(true);
+        drawFrame(0);
       }
     };
 
-    const preloadFrame = (src, index) => {
-      if (frameImages.has(index) || loadedFrames.has(index)) return;
-
-      const image = new Image();
-      image.decoding = 'async';
-      image.onload = () => {
-        loadedFrames.add(index);
-
-        if (desiredFrame === index) {
-          applyFrame(index);
+    framesToUse.forEach((src, index) => {
+      const img = new Image();
+      img.onload = () => {
+        if (isCancelled) return;
+        img.decode()
+          .then(() => {
+            onFrameLoaded(img, index);
+          })
+          .catch((err) => {
+            console.warn(`Failed to decode frame ${index}, using onload fallback:`, err);
+            onFrameLoaded(img, index);
+          });
+      };
+      img.onerror = () => {
+        console.error(`Failed to load frame ${index}: ${src}`);
+        if (isCancelled) return;
+        loadedCount++;
+        if (loadedCount === framesToUse.length) {
+          setCanvasReady(true);
+          drawFrame(0);
         }
       };
-      image.src = src;
-      frameImages.set(index, image);
+      img.src = src;
+    });
 
-      if (image.complete) {
-        loadedFrames.add(index);
-      }
-    };
-
-    const setFrameByProgress = (progress) => {
-      if (!spodekFrame || !SPODEK_FRAMES.length) return;
-
-      const nextFrame = Math.min(
-        SPODEK_FRAMES.length - 1,
-        Math.max(0, Math.round(progress * (SPODEK_FRAMES.length - 1)))
-      );
-      desiredFrame = nextFrame;
-      preloadFrame(SPODEK_FRAMES[nextFrame], nextFrame);
-
-      if (loadedFrames.has(nextFrame)) {
-        applyFrame(nextFrame);
-      }
-    };
-
-    const preloadFrames = () => {
-      if (framesPreloaded) return;
-      framesPreloaded = true;
-
-      SPODEK_FRAMES.forEach((src, index) => {
-        if (index === 0) return;
-        preloadFrame(src, index);
-      });
-    };
-
+    // 4. Scroll triggered Canvas and copy update
     const updateSpodekFromScroll = () => {
       if (!spodekScene) return;
 
@@ -116,13 +150,24 @@ export default function App() {
       const distance = Math.max(1, spodekScene.offsetHeight - window.innerHeight);
       const progress = gsap.utils.clamp(0, 1, (window.scrollY - start) / distance);
 
-      setFrameByProgress(progress);
+      // Map progress directly to frame index
+      if (preloadedImages.length > 0) {
+        const frameIndex = Math.min(
+          preloadedImages.length - 1,
+          Math.max(0, Math.round(progress * (preloadedImages.length - 1)))
+        );
+        drawFrame(frameIndex);
+      }
+
       setSpodekCopy(progress);
 
-      if (spodekFrame) {
-        const scale = 1.035 - progress * 0.025;
-        spodekFrame.style.transform = `scale(${scale.toFixed(4)})`;
-      }
+      // Perform scaling of fallback and canvas
+      const scale = 1.035 - progress * 0.025;
+      const scaleStr = `scale(${scale.toFixed(4)})`;
+      const fallbackImg = document.querySelector('.spodek-fallback');
+      const canvas = canvasRef.current;
+      if (fallbackImg) fallbackImg.style.transform = scaleStr;
+      if (canvas) canvas.style.transform = scaleStr;
     };
 
     const runSpodekTicker = () => {
@@ -138,25 +183,11 @@ export default function App() {
       frameRaf = requestAnimationFrame(runSpodekTicker);
     };
 
-    if (spodekFrame) {
-      setFrameByProgress(0);
-      setSpodekCopy(0);
-      updateSpodekFromScroll();
-      frameRaf = requestAnimationFrame(runSpodekTicker);
+    // Initialize state
+    setSpodekCopy(0);
+    frameRaf = requestAnimationFrame(runSpodekTicker);
 
-      preloadHandle =
-        'requestIdleCallback' in window
-          ? window.requestIdleCallback(preloadFrames, { timeout: 900 })
-          : window.setTimeout(preloadFrames, 350);
-
-      ScrollTrigger.create({
-        trigger: '.spodek-scene',
-        start: 'top 120%',
-        once: true,
-        onEnter: preloadFrames,
-      });
-    }
-
+    // 5. Scroll Animations for other elements
     if (occasionCards.length) {
       gsap.from(occasionCards, {
         y: 28,
@@ -188,14 +219,8 @@ export default function App() {
     });
 
     return () => {
+      isCancelled = true;
       cancelAnimationFrame(frameRaf);
-      if (preloadHandle) {
-        if ('cancelIdleCallback' in window) {
-          window.cancelIdleCallback(preloadHandle);
-        } else {
-          window.clearTimeout(preloadHandle);
-        }
-      }
       ScrollTrigger.getAll().forEach((trigger) => trigger.kill());
     };
   }, []);
@@ -203,7 +228,7 @@ export default function App() {
   return (
     <main>
       <Hero />
-      <Spodek />
+      <Spodek canvasRef={canvasRef} canvasReady={canvasReady} />
       <Occasions />
     </main>
   );
