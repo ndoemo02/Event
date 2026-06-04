@@ -28,8 +28,6 @@ export default function App() {
     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     const spodekScene = document.querySelector('.spodek-scene');
-    const firstBeat = document.querySelector('.spodek-beat.is-first');
-    const nightBeat = document.querySelector('.spodek-beat.is-night');
     const occasionCards = gsap.utils.toArray('.occasion-card');
 
     const preloadedImages = [];
@@ -39,7 +37,26 @@ export default function App() {
     let lastViewportHeight = -1;
     let isCancelled = false;
 
-    // Helper to draw a frame onto the canvas
+    // Resize canvas to match physical pixel resolution for crisp rendering
+    const resizeCanvas = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      const w = Math.round(rect.width * dpr);
+      const h = Math.round(rect.height * dpr);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+        // Redraw after resize
+        if (lastGoodFrame.current) {
+          const ctx = canvas.getContext('2d');
+          if (ctx) ctx.drawImage(lastGoodFrame.current, 0, 0, w, h);
+        }
+      }
+    };
+
+    // Helper to draw a frame onto the canvas at full physical resolution
     const drawFrame = (index) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -47,32 +64,27 @@ export default function App() {
       if (!ctx) return;
 
       const img = preloadedImages[index];
-      if (img) {
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        lastGoodFrame.current = img;
-      } else if (lastGoodFrame.current) {
-        ctx.drawImage(lastGoodFrame.current, 0, 0, canvas.width, canvas.height);
-      }
+      const toDraw = img || lastGoodFrame.current;
+      if (!toDraw) return;
+
+      const cw = canvas.width;
+      const ch = canvas.height;
+      // Cover-fit: scale source image to fill canvas preserving aspect ratio
+      const scaleX = cw / toDraw.naturalWidth;
+      const scaleY = ch / toDraw.naturalHeight;
+      const scale = Math.max(scaleX, scaleY);
+      const sw = toDraw.naturalWidth * scale;
+      const sh = toDraw.naturalHeight * scale;
+      const ox = (cw - sw) / 2;
+      const oy = (ch - sh) / 2;
+
+      ctx.drawImage(toDraw, ox, oy, sw, sh);
+      if (img) lastGoodFrame.current = img;
     };
 
-    const setSpodekCopy = (progress) => {
-      const firstOpacity = gsap.utils.clamp(0, 1, (0.46 - progress) / 0.14);
-      const nightOpacity = gsap.utils.clamp(0, 1, (progress - 0.5) / 0.16);
+    // Text beats removed from Spodek — placeholder for future animated copy
+    const setSpodekCopy = (_progress) => {};
 
-      if (firstBeat) {
-        gsap.set(firstBeat, {
-          autoAlpha: firstOpacity,
-          y: -18 * (1 - firstOpacity),
-        });
-      }
-
-      if (nightBeat) {
-        gsap.set(nightBeat, {
-          autoAlpha: nightOpacity,
-          y: 22 * (1 - nightOpacity),
-        });
-      }
-    };
 
     // 1. Reduced Motion Fallback
     if (prefersReduced) {
@@ -183,9 +195,10 @@ export default function App() {
       frameRaf = requestAnimationFrame(runSpodekTicker);
     };
 
-    // Initialize state
-    setSpodekCopy(0);
+    // Initialize state and canvas size
+    resizeCanvas();
     frameRaf = requestAnimationFrame(runSpodekTicker);
+    window.addEventListener('resize', resizeCanvas, { passive: true });
 
     // 5. Scroll Animations for other elements
     if (occasionCards.length) {
@@ -221,6 +234,7 @@ export default function App() {
     return () => {
       isCancelled = true;
       cancelAnimationFrame(frameRaf);
+      window.removeEventListener('resize', resizeCanvas);
       ScrollTrigger.getAll().forEach((trigger) => trigger.kill());
     };
   }, []);
