@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.vercel/
+.playwright-mcp/
+.codex-remote-attachments/
+
+*.log
+*.local
+.env
+.env.*
+
+event-flow-*.png
+src/assets/spodek-timelapse-animated.webp
+src/assets/spodek_frames_webp_12fps_720x1280.zip
