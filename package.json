@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Event Flow - landing page prototype v0.1 (mobile-first, Vite + React + GSAP + Lenis)",
+  "description": "Event Flow - landing page prototype v0.2 (mobile-first, Vite + React + GSAP)",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "gsap": "^3.12.5",
-    "lenis": "^1.1.13",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

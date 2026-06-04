@@ -1,18 +1,23 @@
 import React from 'react';
-import spodekVideo from '../assets/spodek-timelapse-mobile.mp4';
-import spodekPoster from '../assets/spodek-poster-day.jpg';
+
+const frameModules = import.meta.glob('../assets/spodek_frames_webp/*.webp', {
+  eager: true,
+  import: 'default',
+});
+
+export const SPODEK_FRAMES = Object.entries(frameModules)
+  .sort(([a], [b]) => a.localeCompare(b))
+  .map(([, src]) => src);
 
 export default function Spodek() {
   return (
     <section className="spodek-scene" aria-label="Katowice dzień i noc">
       <div className="spodek-sticky">
-        <video
-          className="spodek-video"
-          src={spodekVideo}
-          poster={spodekPoster}
-          muted
-          playsInline
-          preload="metadata"
+        <img
+          className="spodek-frame"
+          src={SPODEK_FRAMES[0]}
+          alt=""
+          decoding="async"
           aria-hidden="true"
         />
 

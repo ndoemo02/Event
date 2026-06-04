@@ -3,7 +3,7 @@ import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
 import Hero from './components/Hero.jsx';
-import Spodek from './components/Spodek.jsx';
+import Spodek, { SPODEK_FRAMES } from './components/Spodek.jsx';
 import Occasions from './components/Occasions.jsx';
 
 gsap.registerPlugin(ScrollTrigger);
@@ -12,19 +12,26 @@ export default function App() {
   useEffect(() => {
     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    if (prefersReduced) {
-      ScrollTrigger.getAll().forEach((trigger) => trigger.kill());
-      return;
-    }
-
-    const spodekVideo = document.querySelector('.spodek-video');
+    const spodekFrame = document.querySelector('.spodek-frame');
+    const spodekScene = document.querySelector('.spodek-scene');
     const firstBeat = document.querySelector('.spodek-beat.is-first');
     const nightBeat = document.querySelector('.spodek-beat.is-night');
     const occasionCards = gsap.utils.toArray('.occasion-card');
-    let videoDuration = 0;
-    let targetTime = 0.02;
-    let renderedTime = 0.02;
-    let smoothFrame = 0;
+    let currentFrame = -1;
+    let frameRaf = 0;
+    let preloadHandle = 0;
+    let framesPreloaded = false;
+    let lastScrollY = -1;
+    let lastViewportHeight = -1;
+
+    if (prefersReduced) {
+      if (spodekFrame && SPODEK_FRAMES.length) {
+        spodekFrame.src = SPODEK_FRAMES[SPODEK_FRAMES.length - 1];
+      }
+
+      ScrollTrigger.getAll().forEach((trigger) => trigger.kill());
+      return;
+    }
 
     const setSpodekCopy = (progress) => {
       const firstOpacity = gsap.utils.clamp(0, 1, (0.46 - progress) / 0.14);
@@ -45,81 +52,78 @@ export default function App() {
       }
     };
 
-    const smoothVideoScrub = () => {
-      if (!spodekVideo || !videoDuration) {
-        smoothFrame = 0;
-        return;
-      }
+    const setFrameByProgress = (progress) => {
+      if (!spodekFrame || !SPODEK_FRAMES.length) return;
 
-      const diff = targetTime - renderedTime;
+      const nextFrame = Math.min(
+        SPODEK_FRAMES.length - 1,
+        Math.max(0, Math.round(progress * (SPODEK_FRAMES.length - 1)))
+      );
 
-      if (Math.abs(diff) <= 0.008) {
-        renderedTime = targetTime;
-        spodekVideo.currentTime = renderedTime;
-        setSpodekCopy(renderedTime / videoDuration);
-        smoothFrame = 0;
-        return;
-      }
-
-      const dampedStep = gsap.utils.clamp(-0.075, 0.075, diff * 0.18);
-      renderedTime += dampedStep;
-      spodekVideo.currentTime = renderedTime;
-      setSpodekCopy(renderedTime / videoDuration);
-      smoothFrame = requestAnimationFrame(smoothVideoScrub);
-    };
-
-    const queueSmoothScrub = () => {
-      if (!smoothFrame) {
-        smoothFrame = requestAnimationFrame(smoothVideoScrub);
+      if (nextFrame !== currentFrame) {
+        currentFrame = nextFrame;
+        spodekFrame.src = SPODEK_FRAMES[nextFrame];
       }
     };
 
-    const updateVideoDuration = () => {
-      videoDuration = Number.isFinite(spodekVideo?.duration) ? spodekVideo.duration : 0;
-      targetTime = Math.min(videoDuration - 0.04, Math.max(0.02, targetTime));
-      renderedTime = Math.min(videoDuration - 0.04, Math.max(0.02, renderedTime));
+    const preloadFrames = () => {
+      if (framesPreloaded) return;
+      framesPreloaded = true;
+
+      SPODEK_FRAMES.forEach((src, index) => {
+        if (index === 0) return;
+        const image = new Image();
+        image.decoding = 'async';
+        image.src = src;
+      });
     };
 
-    if (spodekVideo) {
-      spodekVideo.pause();
-      spodekVideo.addEventListener('loadedmetadata', updateVideoDuration);
-      if (spodekVideo.readyState >= 1) updateVideoDuration();
+    const updateSpodekFromScroll = () => {
+      if (!spodekScene) return;
+
+      const start = spodekScene.offsetTop;
+      const distance = Math.max(1, spodekScene.offsetHeight - window.innerHeight);
+      const progress = gsap.utils.clamp(0, 1, (window.scrollY - start) / distance);
+
+      setFrameByProgress(progress);
+      setSpodekCopy(progress);
+
+      if (spodekFrame) {
+        const scale = 1.035 - progress * 0.025;
+        spodekFrame.style.transform = `scale(${scale.toFixed(4)})`;
+      }
+    };
+
+    const runSpodekTicker = () => {
+      const nextScrollY = window.scrollY;
+      const nextViewportHeight = window.innerHeight;
+
+      if (nextScrollY !== lastScrollY || nextViewportHeight !== lastViewportHeight) {
+        lastScrollY = nextScrollY;
+        lastViewportHeight = nextViewportHeight;
+        updateSpodekFromScroll();
+      }
+
+      frameRaf = requestAnimationFrame(runSpodekTicker);
+    };
+
+    if (spodekFrame) {
+      setFrameByProgress(0);
+      setSpodekCopy(0);
+      updateSpodekFromScroll();
+      frameRaf = requestAnimationFrame(runSpodekTicker);
+
+      preloadHandle =
+        'requestIdleCallback' in window
+          ? window.requestIdleCallback(preloadFrames, { timeout: 900 })
+          : window.setTimeout(preloadFrames, 350);
 
       ScrollTrigger.create({
         trigger: '.spodek-scene',
-        start: 'top top',
-        end: 'bottom bottom',
-        scrub: true,
-        onUpdate: (self) => {
-          updateVideoDuration();
-
-          if (!videoDuration) {
-            setSpodekCopy(self.progress);
-            return;
-          }
-
-          targetTime = Math.min(
-            videoDuration - 0.04,
-            Math.max(0.02, self.progress * videoDuration)
-          );
-          queueSmoothScrub();
-        },
+        start: 'top 120%',
+        once: true,
+        onEnter: preloadFrames,
       });
-
-      gsap.fromTo(
-        spodekVideo,
-        { scale: 1.035 },
-        {
-          scale: 1,
-          ease: 'none',
-          scrollTrigger: {
-            trigger: '.spodek-scene',
-            start: 'top top',
-            end: 'bottom bottom',
-            scrub: 0.7,
-          },
-        }
-      );
     }
 
     if (occasionCards.length) {
@@ -153,9 +157,13 @@ export default function App() {
     });
 
     return () => {
-      cancelAnimationFrame(smoothFrame);
-      if (spodekVideo) {
-        spodekVideo.removeEventListener('loadedmetadata', updateVideoDuration);
+      cancelAnimationFrame(frameRaf);
+      if (preloadHandle) {
+        if ('cancelIdleCallback' in window) {
+          window.cancelIdleCallback(preloadHandle);
+        } else {
+          window.clearTimeout(preloadHandle);
+        }
       }
       ScrollTrigger.getAll().forEach((trigger) => trigger.kill());
     };
