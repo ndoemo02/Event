@@ -18,11 +18,14 @@ export default function App() {
     const nightBeat = document.querySelector('.spodek-beat.is-night');
     const occasionCards = gsap.utils.toArray('.occasion-card');
     let currentFrame = -1;
+    let desiredFrame = 0;
     let frameRaf = 0;
     let preloadHandle = 0;
     let framesPreloaded = false;
     let lastScrollY = -1;
     let lastViewportHeight = -1;
+    const frameImages = new Map();
+    const loadedFrames = new Set([0]);
 
     if (prefersReduced) {
       if (spodekFrame && SPODEK_FRAMES.length) {
@@ -52,6 +55,35 @@ export default function App() {
       }
     };
 
+    const applyFrame = (frameIndex) => {
+      if (!spodekFrame || !SPODEK_FRAMES.length) return;
+
+      if (frameIndex !== currentFrame) {
+        currentFrame = frameIndex;
+        spodekFrame.src = SPODEK_FRAMES[frameIndex];
+      }
+    };
+
+    const preloadFrame = (src, index) => {
+      if (frameImages.has(index) || loadedFrames.has(index)) return;
+
+      const image = new Image();
+      image.decoding = 'async';
+      image.onload = () => {
+        loadedFrames.add(index);
+
+        if (desiredFrame === index) {
+          applyFrame(index);
+        }
+      };
+      image.src = src;
+      frameImages.set(index, image);
+
+      if (image.complete) {
+        loadedFrames.add(index);
+      }
+    };
+
     const setFrameByProgress = (progress) => {
       if (!spodekFrame || !SPODEK_FRAMES.length) return;
 
@@ -59,10 +91,11 @@ export default function App() {
         SPODEK_FRAMES.length - 1,
         Math.max(0, Math.round(progress * (SPODEK_FRAMES.length - 1)))
       );
+      desiredFrame = nextFrame;
+      preloadFrame(SPODEK_FRAMES[nextFrame], nextFrame);
 
-      if (nextFrame !== currentFrame) {
-        currentFrame = nextFrame;
-        spodekFrame.src = SPODEK_FRAMES[nextFrame];
+      if (loadedFrames.has(nextFrame)) {
+        applyFrame(nextFrame);
       }
     };
 
@@ -72,9 +105,7 @@ export default function App() {
 
       SPODEK_FRAMES.forEach((src, index) => {
         if (index === 0) return;
-        const image = new Image();
-        image.decoding = 'async';
-        image.src = src;
+        preloadFrame(src, index);
       });
     };
 
